@@ -1,7 +1,15 @@
+import functools
 import mock
 import warnings
+try:
+    import urlparse
+except ImportError:  # Python 3
+    from urllib import parse as urlparse
 
-from django.core.urlresolvers import NoReverseMatch, set_urlconf
+try:
+    from django.urls import NoReverseMatch, set_urlconf
+except ImportError:  # Django<2.0
+    from django.core.urlresolvers import NoReverseMatch, set_urlconf
 from django.template import Context, Template
 from django.test import TestCase
 from django.test.client import RequestFactory
@@ -154,9 +162,26 @@ class SubdomainURLRoutingTestCase(SubdomainTestMixin, TestCase):
     def test_appends_slash(self):
         for subdomain in (None, 'api', 'wildcard'):
             host = self.get_host_for_subdomain(subdomain)
-            response = self.client.get('/example', HTTP_HOST=host)
+            path = '/example'  # No trailing slash.
+            response = self.client.get(path, HTTP_HOST=host)
             self.assertEqual(response.status_code, 301)
-            self.assertEqual(response['Location'], 'http://%s/example/' % host)
+
+            # Whether the response's Location header contains the URL prefix
+            # here doesn't actually matter, since it will be considered
+            # relative to the request URL, which *did* include the HTTP Host
+            # header. To pave over inconsistencies between Django versions, we
+            # normalize them both to be prefixed with the requested host. (If a
+            # *different* base host is returned in the Location header, this
+            # should override our default base and error.)
+            normalize = functools.partial(
+                urlparse.urljoin,
+                'http://%s/' % (host,),
+            )
+
+            self.assertEqual(
+                normalize(response['Location']),
+                normalize(path + '/'),
+            )
 
 
 class SubdomainURLReverseTestCase(SubdomainTestMixin, TestCase):
